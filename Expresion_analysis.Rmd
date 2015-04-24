@@ -1,0 +1,201 @@
+---
+title: "Exp_analysis"
+author: "Caryn Johansen"
+date: "April 23, 2015"
+output: html_document
+---
+
+Get log fold change for gene expression under different nutrient environments
+```{r}
+library("ggplot2")
+library("reshape2")
+
+#shoot_expression <-  read.table("shootnormUQmeangt3.4_range_gt1.5.txt", header=T, sep=" ")
+#dim(shoot_expression)
+```
+#[1] 15528    73
+
+split the data set into four different chunks by P and K nutrient:
+```{r}
+#shoot_long <- melt(shoot_expression)
+#str(shoot_long)
+#all the different samples are different factors: 72 factors.
+
+#HPK <- shoot_long[grep("^HPK", shoot_long$variable),]
+#LPK <- shoot_long[grep("^LPK", shoot_long$variable),]
+#HPLK <- shoot_long[grep("^HPLK", shoot_long$variable),]
+#LPHK <- shoot_long[grep("^LPHK", shoot_long$variable),]
+
+#reshape to wide dataframe for analysis
+#LPK_wide <- dcast(LPK, Gene ~ variable)
+#HPK_wide <- dcast(HPK, Gene ~ variable)
+#HPLK_wide <- dcast(HPLK, Gene ~ variable)
+#LPHK_wide <- dcast(LPHK, Gene  ~ variable)
+
+#write to table, for future easy of use.
+#write.table(LPK_wide, "lpk.txt", sep=",")
+#write.table(HPK_wide, "hpk.txt", sep=",")
+#write.table(HPLK_wide, "hplk.txt", sep=",")
+#write.table(LPHK_wide, "lphk.txt", sep=",")
+
+#now read.table() them in
+rm(list=ls())
+#LPK <- read.table("lpk.txt", header=T, sep=",")
+#HPK <- read.table("hpk.txt", header=T, sep=",")
+#LPHK <- read.table("lphk.txt", header=T, sep=",")
+#HPLK <- read.table("hplk.txt", header=T, sep=",")
+```
+
+Write a function that will get the log fold change between the  
+gene expression under the lowest nitrogen condition and all the other  
+conditions
+
+```{r}
+myShittyFunction <- function( inputDF ) {
+  output.df <- data.frame()
+  for (i in 1:nrow(inputDF)) {
+    #print("row")
+    #row <- matrix(nrow=1, ncol=7)
+    for (j in 2:length(inputDF)) {
+      #print("col")
+      datacol <- j-1
+      #print(datacol)
+      output.df[i,datacol] <- log2(as.numeric(inputDF[i,j])/as.numeric(inputDF[i,2]))
+    }
+  }
+  output.df <- cbind(inputDF[,1], output.df)
+  return(output.df)
+}
+
+#use said shitty function to get data frames with the LFC
+#lfc_LPK <- myShittyFunction(LPK)
+#lfc_HPK <- myShittyFunction(HPK)
+#lfc_LPHK <- myShittyFunction(LPHK)
+#lfc_HPLK <- myShittyFunction(HPLK)
+
+#get the proper column names back
+nutrients <- colnames(HPK)
+colnames(lfc_HPK) <- nutrients
+colnames(lfc_LPK) <- nutrients
+colnames(lfc_HPLK) <- nutrients
+colnames(lfc_LPHK) <- nutrients
+```
+
+If I wanted to plot anything, I'd do this:
+```{r}
+lfc_HPK_long <- melt(lfc_HPK)
+ggplot(lfc_HPK_long, aes(x=variable, y=value, group=Gene)) + geom_point() + geom_line()
+```
+
+Histagram plot for the distribution LFC for the genes:
+```{r}
+hist(lfc_HPK_long$value, breaks=100, freq = F)
+```
+Nice and normal, as we might expect for a normalized set.
+
+---
+
+I want to know which categorty the maximum and minimum DE is in.
+Instead of rank I could just pull out the maximum and the minumum
+
+function to pull out maximum and minimum fold change for each gene
+```{r}
+anotherShittyFunction <- function( df ) {
+  output.m <- matrix(nrow=nrow(df), ncol=4)
+  for( i in 1:nrow(df)) {
+    
+    max <- max(df[i,3:length(df)])
+    max.grp <- names(which.max(df[i,3:length(df)]))
+    min <- min(df[i,3:length(df)])
+    min.grp <- names(which.min(df[i,3:length(df)]))
+    
+    new.row<-c(max, max.grp, min, min.grp)
+    output.m[i,] <- new.row
+    
+  }
+  output.df <- as.data.frame(output.m)
+  output.df <- cbind(df[,1], output.df)
+  return(output.df)
+  
+}
+
+hpk_mm <- anotherShittyFunction(lfc_HPK)
+```
+
+count, for max and for min, how many of each nitrogen group there are
+
+```{r}
+library(plyr)
+colnames(hpk_mm) <- c("Gene", "MaxValue", "MaxValueGroup", "MinValue", "MinValueGroup")
+hpk_mm$MaxValue <- as.numeric(as.character(hpk_mm$MaxValue))
+hpk_mm$MinValue <- as.numeric(as.character(hpk_mm$MinValue))
+hpk_mm$MaxValueGroup <- as.character(hpk_mm$MaxValueGroup)
+
+maxGroups <- count(hpk_mm, vars="MaxValueGroup")
+minGroups <- count(hpk_mm, vars="MinValueGroup")
+ggplot(hpk_mm, aes(x=as.factor(MaxValueGroup))) + geom_bar()
+```
+
+Sometimes the maximum value is still a reduction in expression
+So I need to split the sets into increase expresion above a threshold
+and a decrease expression below a threshold.
+
+For thresholding, let's say 1 and above, for doubling expression
+and -1 and below, for halving expression.
+
+```{r}
+ExpTrend <- function( df ){
+  output.m <- matrix(nrow=nrow(df), ncol=3)
+  for (i in 1:nrow(df)) {
+    if (max(df[i,3:length(df)]) > 0) {
+      de <- max(df[i,3:length(df)])
+      trend <- "up"
+      de.group <- names(which.max(df[i,3:length(df)]))
+    } else {
+      de <- min(df[i,3:length(df)])
+      trend <- "down"
+      de.group <- names(which.min(df[i,3:length(df)]))
+    }
+    new.row <- c(de, de.group, trend)
+    output.m[i,] <- new.row
+  }
+  output.df <- as.data.frame(output.m)
+  output.df <- cbind(df[,1], output.df)
+  colnames(output.df) <- c("Gene", "GreatestDE", "DE.Group", "Trend")
+  output.df$GreatestDE <- as.numeric(as.character(output.df$GreatestDE))
+  return(output.df)
+}
+
+count(hpk_trend, var="DE.Group")
+count(hpk_trend, var="Trend")
+
+```
+
+Get trends for all nutrient groups:
+
+```{r}
+hpk_trend <- ExpTrend(lfc_HPK)
+lpk_trend <- ExpTrend(lfc_LPK)
+lphk_trend <- ExpTrend(lfc_LPHK)
+hplk_trend <- ExpTrend(lfc_HPLK)
+
+count(hpk_trend, var="DE.Group")
+count(hpk_trend, var="Trend")
+count(lpk_trend, var="DE.Group")
+count(lpk_trend, var="Trend")
+```
+
+Write all the log fold change and trend tables:
+```{r}
+#lfc
+write.table(lfc_HPK, file="lfc_hpk.txt", sep="\t")
+write.table(lfc_LPHK, file="lfc_lphk.txt", sep="\t")
+write.table(lfc_LPK, file="lfc_lpk.txt", sep="\t")
+write.table(lfc_HPLK, file="lfc_hplk.txt", sep="\t")
+
+#trends
+write.table(hpk_trend, file="hpk_trend.txt", sep="\t")
+write.table(hplk_trend, file="hplk_trend.txt", sep="\t")
+write.table(lpk_trend, file="lpk_trend.txt", sep="\t")
+write.table(lphk_trend, file="lphk_trend.txt", sep="\t")
+```
