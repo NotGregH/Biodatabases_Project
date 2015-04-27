@@ -9,11 +9,12 @@ Get log fold change for gene expression under different nutrient environments
 ```{r}
 library("ggplot2")
 library("reshape2")
+library("plyr")
 
 #shoot_expression <-  read.table("shootnormUQmeangt3.4_range_gt1.5.txt", header=T, sep=" ")
 #dim(shoot_expression)
 ```
-#[1] 15528    73
+[1] 15528    73
 
 split the data set into four different chunks by P and K nutrient:
 ```{r}
@@ -44,6 +45,9 @@ rm(list=ls())
 #HPK <- read.table("hpk.txt", header=T, sep=",")
 #LPHK <- read.table("lphk.txt", header=T, sep=",")
 #HPLK <- read.table("hplk.txt", header=T, sep=",")
+
+all.data <- cbind(LPK, HPK[,2:7], LPHK[,2:7], HPLK[,2:7])
+all.data.header <- colnames(all.data)
 ```
 
 Write a function that will get the log fold change between the  
@@ -66,6 +70,10 @@ myShittyFunction <- function( inputDF ) {
   output.df <- cbind(inputDF[,1], output.df)
   return(output.df)
 }
+
+lfc_allData <- myShittyFunction(all.data)
+colnames(lfc_allData) <- all.data.header
+write.table(lfc_allData, file="lfc_all_LPK0.5.csv", row.names=F, sep=",")
 
 #use said shitty function to get data frames with the LFC
 #lfc_LPK <- myShittyFunction(LPK)
@@ -199,3 +207,114 @@ write.table(hplk_trend, file="hplk_trend.txt", sep="\t")
 write.table(lpk_trend, file="lpk_trend.txt", sep="\t")
 write.table(lphk_trend, file="lphk_trend.txt", sep="\t")
 ```
+
+Write a function to threshold the differential expression:
+
+using the loc fold change data frame, has the gene been up-regulated, 
+down-regulated or has essentially not chnage happened? Up-regulation will be 
+considered a log fold change of 1 or more, down-regulation a log-fold change 
+of -1 or less.
+
+```{r}
+
+regulation_badbadbadnotgood <- function( df) {
+  workingdf <- df[,2:length(df)]
+  output.m <- matrix(nrow=nrow(df), ncol=(length(df)-1))
+  
+  for (i in 1:nrow(workingdf)) {
+    for (j in 1:length(workingdf)) {
+      
+      if (workingdf[i,j] >= 1 ) {
+        output.m[i,j] <- 1
+      } else if (workingdf[i,j] <= -1 ) {
+        output.m[i,j] <- -1
+      } else {
+        output.m[i,j] <- 0
+      } 
+    
+    }
+  }
+  output.df <- as.data.frame(output.m)
+  print(str(output.df))
+  output.df <- cbind(df[,1], output.df)
+  print(str(output.df))
+  colnames(output.df) <- colnames(df)
+  return(output.df)
+} 
+
+
+all_working  <- lfc_allData
+
+lfc_exp_thresh <- regulation_badbadbadnotgood(all_working)
+
+write.table(new_flc_all, "lfc_exp_threshold.csv", sep=",", row.names=F)
+
+#melt to a long formate
+lfc_exp_thresh_long <- melt(new_flc_all)
+dim(lfc_exp_thresh_long)
+```
+
+Filter out genes with no regulation across the boards (rows where there is no
+ instance of up of down regulation)
+
+```{r}
+lfc_exp_thresh_filtered <- lfc_exp_thresh
+rows_to_filter_out <- vector(length=nrow(lfc_exp_thresh))
+for (i in 1:nrow(lfc_exp_thresh)) {
+  if (max(lfc_exp_thresh[i,2:length(lfc_exp_thresh_filtered)]) == 0 && 
+        min(lfc_exp_thresh[i,2:length(lfc_exp_thresh_filtered)] == 0)) {
+    rows_to_filter_out[i] <- TRUE
+        }
+}
+lfc_exp_thresh_filtered <- lfc_exp_thresh[!rows_to_filter_out,]
+
+write.table(lfc_exp_thresh_filtered, file="lfc_exp_thresh_F.csv", sep=",", row.names=F)
+lfc_exp_thresh_filtered <- read.table("lfc_exp_thresh_F.csv", sep=",", header=T)
+```
+
+Combine the biomass, nutrient condition, regulation information into one, long data frame
+
+```{r}
+lfc_exp_thresh_f_long <- melt(lfc_exp_thresh_filtered)
+colnames(lfc_exp_thresh_f_long) <- c("Gene", "Condition_Name", "regulation")
+dim(lfc_exp_thresh_f_long)
+
+
+
+#laod the biomass data
+bm <- read.table("Biomass.data", sep=" ", header=T)
+
+
+#make the biomass vlaue a factor
+bm.mean <- tapply(bm$Biomass.g.,bm$Condition_Name, mean)
+bm.mean <- as.data.frame(bm.mean)
+bm.mean <- cbind(Condition_Name = rownames(bm.mean), bm.mean)
+
+#merge the filtered regulation and the biomass mean tables
+
+all_long <- merge(lfc_exp_thresh_f_long, bm.mean)
+
+write.table(all_long, file="exp_thresh_F_biomass.csv", sep=",", row.names=F)
+exp_thresh_F_biomass <- read.table("exp_thresh_F_biomass.csv", sep=",", header=T)
+```
+
+Design a general linear model
+
+```{r}
+
+lm <- lm(bm.mean ~ Condition_Name + regulation, data=exp_thresh_F_biomass)
+summary(lm)
+```
+
+RWeka
+
+```{r}
+library(RWeka)
+library(party)
+
+
+#this doens't really work
+#tree1 <- J48(Gene ~ Condition_Name + bm.mean + regulation, data=exp_thresh_F_biomass, control=Weka_control(R =T))
+#if(require("party", quietly = TRUE))  plot(tree1)
+```
+
